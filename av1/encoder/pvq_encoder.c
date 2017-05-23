@@ -66,6 +66,40 @@ static void od_fill_dynamic_rsqrt_table(double *table, const int table_size,
     table[i] = od_rsqrt_table((int)(start + 2*i + 1));
 }
 
+#include "immintrin.h"
+
+DECLARE_ALIGNED(32, static const int32_t, LOAD_MASKS_256_32[9][8]) =
+{
+  /*{0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, -1},
+  {0, 0, 0, 0, 0, 0, -1, -1},
+  {0, 0, 0, 0, 0, -1, -1, -1},
+  {0, 0, 0, 0, -1, -1, -1, -1},
+  {0, 0, 0, -1, -1, -1, -1, -1},
+  {0, 0, -1, -1, -1, -1, -1, -1},
+  {0, -1, -1, -1, -1, -1, -1, -1},
+  {-1, -1, -1, -1, -1, -1, -1, -1},*/
+  {0, 0, 0, 0, 0, 0, 0, 0},
+  {-1, 0, 0, 0, 0, 0, 0, 0},
+  {-1, -1, 0, 0, 0, 0, 0, 0},
+  {-1, -1, -1, 0, 0, 0, 0, 0},
+  {-1, -1, -1, -1, 0, 0, 0, 0},
+  {-1, -1, -1, -1, -1, 0, 0, 0},
+  {-1, -1, -1, -1, -1, -1, 0, 0},
+  {-1, -1, -1, -1, -1, -1, -1, 0},
+  {-1, -1, -1, -1, -1, -1, -1, -1}
+};
+
+void print_128_ps(__m128 in) {
+  float* data;
+  int i;
+  data = (float *)(&in);
+  for (i = 0; i < 4; i++) {
+    fprintf(stderr, "%.0f ", data[i]);
+  }
+  fprintf(stderr, "\n");
+}
+
 /** Find the codepoint on the given PSphere closest to the desired
  * vector. Double-precision PVQ search just to make sure our tests
  * aren't limited by numerical accuracy.
@@ -137,6 +171,8 @@ static double pvq_search_rdo_double(const od_val16 *xcoeff, int n, int k,
      the first. */
   delta_rate = 3./n;
   /* Search one pulse at a time */
+#if 0
+#if 1
   for (; i < k - rdo_pulses; i++) {
     int pos;
     double best_xy;
@@ -160,10 +196,195 @@ static double pvq_search_rdo_double(const od_val16 *xcoeff, int n, int k,
     yy = yy + 2*ypulse[pos] + 1;
     ypulse[pos]++;
   }
+#else
+  for (; i < k - rdo_pulses; i++) {
+    int pos;
+    float best_xy;
+    float best_yy;
+    pos = 0;
+    best_xy = -10;
+    best_yy = 1;
+    for (j = 0; j < n; j++) {
+      float tmp_xy;
+      float tmp_yy;
+      tmp_xy = xy + x[j];
+      tmp_yy = yy + 2*ypulse[j] + 1;
+      tmp_xy *= tmp_xy;
+      if (j == 0 || tmp_xy*best_yy > best_xy*tmp_yy) {
+        best_xy = tmp_xy;
+        best_yy = tmp_yy;
+        pos = j;
+      }
+    }
+    xy = xy + x[pos];
+    yy = yy + 2*ypulse[pos] + 1;
+    ypulse[pos]++;
+  }
+#endif
+#else
+  for (; i < k - rdo_pulses; i++) {
+    int pos;
+    __m256 best_positions;
+    __m256 best_xys;
+    __m256 best_yys;
+    __m256 indexes;
+    __m256 xy_vec;
+    __m256 yy_vec;
+    __m128 best_xy = _mm_set_ss(-10);
+    __m128 best_yy = _mm_set_ss(1);
+    pos = 0;
+    best_positions = _mm256_set1_ps(0);
+    indexes = _mm256_set_ps(7, 6, 5, 4, 3, 2, 1, 0);
+    xy_vec = _mm256_set1_ps((float)xy);
+    yy_vec = _mm256_set1_ps((float)(yy + 1));
+    best_xys = _mm256_set1_ps((float)-10);
+    best_yys = _mm256_set1_ps((float)1);
+    j = 0;
+#if 1
+    for (; j < n - 8; j += 8) {
+      __m256i ypulse_vec;
+      __m256 tmp_yy;
+      __m256d tmp_xy_pd0;
+      __m256d tmp_xy_pd1;
+      __m256 tmp_xy;
+      __m256 cmpA;
+      __m256 cmpB;
+      __m256 blend_mask;
+      ypulse_vec = _mm256_loadu_si256((__m256i *)(ypulse + j));
+      ypulse_vec = _mm256_slli_epi32(ypulse_vec, 1);
+      tmp_yy = _mm256_cvtepi32_ps(ypulse_vec);
+      tmp_yy = _mm256_add_ps(yy_vec, tmp_yy);
+      tmp_xy_pd0 = _mm256_load_pd(x + j);
+      tmp_xy_pd1 = _mm256_load_pd(x + j + 4);
+      tmp_xy = _mm256_castps128_ps256(_mm256_cvtpd_ps(tmp_xy_pd0));
+      tmp_xy = _mm256_insertf128_ps(tmp_xy, _mm256_cvtpd_ps(tmp_xy_pd1), 1);
+      tmp_xy = _mm256_add_ps(tmp_xy, xy_vec);
+      tmp_xy = _mm256_mul_ps(tmp_xy, tmp_xy);
+      cmpA = _mm256_mul_ps(tmp_xy, best_yys);
+      cmpB = _mm256_mul_ps(best_xys, tmp_yy);
+      blend_mask = _mm256_cmp_ps(cmpA, cmpB, _CMP_GT_OS);
+      best_xys = _mm256_blendv_ps(best_xys, tmp_xy, blend_mask);
+      best_yys = _mm256_blendv_ps(best_yys, tmp_yy, blend_mask);
+      best_positions = _mm256_blendv_ps(best_positions, indexes, blend_mask);
+      indexes = _mm256_add_ps(indexes, _mm256_set1_ps(8));
+    }
+    if (j < n) {
+      __m256i mask;
+      __m256i ypulse_vec;
+      __m256 tmp_yy;
+      __m256d tmp_xy_pd0;
+      __m256d tmp_xy_pd1;
+      __m256 tmp_xy;
+      __m256 cmpA;
+      __m256 cmpB;
+      __m256 blend_mask;
+      mask = _mm256_load_si256((__m256i *)LOAD_MASKS_256_32[n - j]);
+      ypulse_vec = _mm256_maskload_epi32(ypulse + j, mask);
+      ypulse_vec = _mm256_slli_epi32(ypulse_vec, 1);
+      tmp_yy = _mm256_cvtepi32_ps(ypulse_vec);
+      tmp_yy = _mm256_add_ps(yy_vec, tmp_yy);
+      tmp_xy_pd0 = _mm256_load_pd(x + j);
+      tmp_xy_pd1 = _mm256_load_pd(x + j + 4);
+      tmp_xy = _mm256_castps128_ps256(_mm256_cvtpd_ps(tmp_xy_pd0));
+      tmp_xy = _mm256_insertf128_ps(tmp_xy, _mm256_cvtpd_ps(tmp_xy_pd1), 1);
+      tmp_xy = _mm256_add_ps(tmp_xy, xy_vec);
+      tmp_xy = _mm256_mul_ps(tmp_xy, tmp_xy);
+      cmpA = _mm256_mul_ps(tmp_xy, best_yys);
+      cmpB = _mm256_mul_ps(best_xys, tmp_yy);
+      blend_mask = _mm256_cmp_ps(cmpA, cmpB, _CMP_GT_OS);
+      blend_mask = _mm256_and_ps(blend_mask, _mm256_castsi256_ps(mask));
+      best_xys = _mm256_blendv_ps(best_xys, tmp_xy, blend_mask);
+      best_yys = _mm256_blendv_ps(best_yys, tmp_yy, blend_mask);
+      best_positions = _mm256_blendv_ps(best_positions, indexes, blend_mask);
+      j = n;
+    }
+    if (j != 0) {
+      __m128 lower_xys;
+      __m128 lower_yys;
+      __m128 lower_positions;
+      __m128 upper_xys;
+      __m128 upper_yys;
+      __m128 upper_positions;
+      __m128 cmpA;
+      __m128 cmpB;
+      __m128 blend_mask;
+      lower_xys = _mm256_castps256_ps128(best_xys);
+      lower_yys = _mm256_castps256_ps128(best_yys);
+      lower_positions = _mm256_castps256_ps128(best_positions);
+      upper_xys = _mm256_extractf128_ps(best_xys, 1);
+      upper_yys = _mm256_extractf128_ps(best_yys, 1);
+      upper_positions = _mm256_extractf128_ps(best_positions, 1);
+      cmpA = _mm_mul_ps(upper_xys, lower_yys);
+      cmpB = _mm_mul_ps(lower_xys, upper_yys);
+      blend_mask = _mm_cmp_ps(cmpA, cmpB, _CMP_GT_OS);
+      blend_mask = _mm_or_ps(blend_mask, _mm_and_ps(
+        _mm_cmp_ps(upper_positions, lower_positions, _CMP_LT_OS),
+        _mm_cmp_ps(cmpA, cmpB, _CMP_EQ_OS)));
+
+      lower_xys = _mm_blendv_ps(lower_xys, upper_xys, blend_mask);
+      lower_yys = _mm_blendv_ps(lower_yys, upper_yys, blend_mask);
+      lower_positions = _mm_blendv_ps(lower_positions, upper_positions, blend_mask);
+      upper_xys = _mm_shuffle_ps(lower_xys, lower_xys, _MM_SHUFFLE(0, 1, 2, 3));
+      upper_yys = _mm_shuffle_ps(lower_yys, lower_yys, _MM_SHUFFLE(0, 1, 2, 3));
+      upper_positions = _mm_shuffle_ps(lower_positions, lower_positions, _MM_SHUFFLE(0, 1, 2, 3));
+
+      cmpA = _mm_mul_ps(upper_xys, lower_yys);
+      cmpB = _mm_mul_ps(lower_xys, upper_yys);
+      blend_mask = _mm_cmp_ps(cmpA, cmpB, _CMP_GT_OS);
+      blend_mask = _mm_or_ps(blend_mask, _mm_and_ps(
+        _mm_cmp_ps(upper_positions, lower_positions, _CMP_LT_OS),
+        _mm_cmp_ps(cmpA, cmpB, _CMP_EQ_OS)));
+
+      lower_xys = _mm_blendv_ps(lower_xys, upper_xys, blend_mask);
+      lower_yys = _mm_blendv_ps(lower_yys, upper_yys, blend_mask);
+      lower_positions = _mm_blendv_ps(lower_positions, upper_positions, blend_mask);
+      upper_xys = _mm_shuffle_ps(lower_xys, lower_xys, _MM_SHUFFLE(0, 1, 0, 1));
+      upper_yys = _mm_shuffle_ps(lower_yys, lower_yys, _MM_SHUFFLE(0, 1, 0, 1));
+      upper_positions = _mm_shuffle_ps(lower_positions, lower_positions, _MM_SHUFFLE(0, 1, 0, 1));
+      cmpA = _mm_mul_ss(upper_xys, lower_yys);
+      cmpB = _mm_mul_ss(lower_xys, upper_yys);
+      blend_mask = _mm_cmp_ss(cmpA, cmpB, _CMP_GT_OS);
+      blend_mask = _mm_or_ps(blend_mask, _mm_and_ps(
+        _mm_cmp_ss(upper_positions, lower_positions, _CMP_LT_OS),
+        _mm_cmp_ss(cmpA, cmpB, _CMP_EQ_OS)));
+      best_xy = _mm_blendv_ps(lower_xys, upper_xys, blend_mask);
+      best_yy = _mm_blendv_ps(lower_yys, upper_yys, blend_mask);
+      lower_positions = _mm_blendv_ps(lower_positions, upper_positions, blend_mask);
+      pos = _mm_cvtss_si32(lower_positions);
+    }
+#endif
+/*
+    for (; j < n; j ++) {
+      __m128 tmp_yy;
+      __m128d tmp_xy_sd;
+      __m128 tmp_xy;
+      __m128 cmpA;
+      __m128 cmpB;
+      tmp_yy = _mm_set_ss(2*ypulse[j]);
+      tmp_yy = _mm_add_ss(tmp_yy, _mm256_castps256_ps128(yy_vec));
+      tmp_xy_sd = _mm_load_sd(x + j);
+      tmp_xy = _mm_cvtsd_ss(_mm_setzero_ps(), tmp_xy_sd);
+      tmp_xy = _mm_add_ss(tmp_xy, _mm256_castps256_ps128(xy_vec));
+      tmp_xy = _mm_mul_ss(tmp_xy, tmp_xy);
+      cmpA = _mm_mul_ss(tmp_xy, best_yy);
+      cmpB = _mm_mul_ss(best_xy, tmp_yy);
+      if (_mm_ucomigt_ss(cmpA, cmpB)) {
+        best_xy = tmp_xy;
+        best_yy = tmp_yy;
+        pos = j;
+      }
+    }
+*/
+    xy = xy + x[pos];
+    yy = yy + 2*ypulse[pos] + 1;
+    ypulse[pos]++;
+  }
+#endif
   /* Search last pulses with RDO. Distortion is D = (x-y)^2 = x^2 - 2*x*y + y^2
      and since x^2 and y^2 are constant, we just maximize x*y, plus a
      lambda*rate term. Note that since x and y aren't normalized here,
      we need to divide by sqrt(x^2)*sqrt(y^2). */
+#if 0
   for (; i < k; i++) {
     double rsqrt_table[4];
     int rsqrt_table_size = 4;
@@ -192,6 +413,171 @@ static double pvq_search_rdo_double(const od_val16 *xcoeff, int n, int k,
     yy = yy + 2*ypulse[pos] + 1;
     ypulse[pos]++;
   }
+#else
+#if 0
+#define ENHANCED_INV_SQRT
+#endif
+  double special_lambda = lambda/(2*norm_1);
+  /* __m256d lambda_vec = _mm256_set1_pd(special_lambda); */
+  __m256 delta_rate_vec = _mm256_set1_ps((float)(delta_rate*special_lambda));
+  /*__m256 accel_rate_vec = _mm256_set1_ps((float)(accel_rate*special_lambda));*/
+  for (; i < k; i++) {
+    int pos;
+    __m128 best_cost;
+    __m256 best_positions;
+    __m256 best_costs;
+    __m256 indexes;
+    __m256 xy_vec;
+    __m256 yy_vec;
+    pos = 0;
+    best_cost = _mm_set_ss(-1e5);
+    best_positions = _mm256_set1_ps(0);
+    indexes = _mm256_set_ps(7, 6, 5, 4, 3, 2, 1, 0);
+    best_costs = _mm256_set1_ps(-1e5);
+    xy_vec = _mm256_set1_ps((float)xy);
+    yy_vec = _mm256_set1_ps((float)(yy + 1));
+    j = 0;
+#if 1
+    for (; j < n - 8; j += 8) {
+      __m256i ypulse_vec;
+      __m256 tmp_yy;
+      __m256d tmp_xy_pd0;
+      __m256d tmp_xy_pd1;
+      __m256 tmp_xy;
+      __m256 blend_mask;
+      ypulse_vec = _mm256_loadu_si256((__m256i *)(ypulse + j));
+      ypulse_vec = _mm256_slli_epi32(ypulse_vec, 1);
+      tmp_yy = _mm256_cvtepi32_ps(ypulse_vec);
+      tmp_yy = _mm256_add_ps(yy_vec, tmp_yy);
+      __m256 input = tmp_yy;
+      tmp_yy = _mm256_rsqrt_ps(tmp_yy);
+#ifdef ENHANCED_INV_SQRT
+      __m256 almostOne = _mm256_mul_ps(input, _mm256_mul_ps(tmp_yy, tmp_yy));
+      tmp_yy = _mm256_mul_ps(_mm256_set1_ps(.5), tmp_yy);
+      tmp_yy = _mm256_mul_ps(tmp_yy, _mm256_sub_ps(_mm256_set1_ps(3), almostOne));
+#endif
+      tmp_xy_pd0 = _mm256_load_pd(x + j);
+      tmp_xy_pd1 = _mm256_load_pd(x + j + 4);
+      tmp_xy = _mm256_castps128_ps256(_mm256_cvtpd_ps(tmp_xy_pd0));
+      tmp_xy = _mm256_insertf128_ps(tmp_xy, _mm256_cvtpd_ps(tmp_xy_pd1), 1);
+      tmp_xy = _mm256_add_ps(tmp_xy, xy_vec);
+      tmp_xy = _mm256_mul_ps(tmp_xy, tmp_yy);
+      tmp_xy = _mm256_fnmadd_ps(indexes, delta_rate_vec, tmp_xy);
+      blend_mask = _mm256_cmp_ps(tmp_xy, best_costs, _CMP_GT_OS);
+      best_costs = _mm256_blendv_ps(best_costs, tmp_xy, blend_mask);
+      best_positions = _mm256_blendv_ps(best_positions, indexes, blend_mask);
+      indexes = _mm256_add_ps(indexes, _mm256_set1_ps(8));
+    }
+#if 1
+    if (j < n) {
+      __m256i mask;
+      __m256i ypulse_vec;
+      __m256 tmp_yy;
+      __m256d tmp_xy_pd0;
+      __m256d tmp_xy_pd1;
+      __m256 tmp_xy;
+      __m256 blend_mask;
+      mask = _mm256_load_si256((__m256i *)LOAD_MASKS_256_32[n - j]);
+      ypulse_vec = _mm256_maskload_epi32(ypulse + j, mask);
+      ypulse_vec = _mm256_slli_epi32(ypulse_vec, 1);
+      tmp_yy = _mm256_cvtepi32_ps(ypulse_vec);
+      tmp_yy = _mm256_add_ps(yy_vec, tmp_yy);
+      __m256 input = tmp_yy;
+      tmp_yy = _mm256_rsqrt_ps(tmp_yy);
+#ifdef ENHANCED_INV_SQRT
+      __m256 almostOne = _mm256_mul_ps(input, _mm256_mul_ps(tmp_yy, tmp_yy));
+      tmp_yy = _mm256_mul_ps(_mm256_set1_ps(.5), tmp_yy);
+      tmp_yy = _mm256_mul_ps(tmp_yy, _mm256_sub_ps(_mm256_set1_ps(3), almostOne));
+#endif
+      tmp_xy_pd0 = _mm256_load_pd(x + j);
+      tmp_xy_pd1 = _mm256_load_pd(x + j + 4);
+      tmp_xy = _mm256_castps128_ps256(_mm256_cvtpd_ps(tmp_xy_pd0));
+      tmp_xy = _mm256_insertf128_ps(tmp_xy, _mm256_cvtpd_ps(tmp_xy_pd1), 1);
+      tmp_xy = _mm256_add_ps(tmp_xy, xy_vec);
+      tmp_xy = _mm256_mul_ps(tmp_xy, tmp_yy);
+      tmp_xy = _mm256_fnmadd_ps(indexes, delta_rate_vec, tmp_xy);
+      blend_mask = _mm256_cmp_ps(tmp_xy, best_costs, _CMP_GT_OS);
+
+      blend_mask = _mm256_and_ps(blend_mask, _mm256_castsi256_ps(mask));
+
+      best_costs = _mm256_blendv_ps(best_costs, tmp_xy, blend_mask);
+      best_positions = _mm256_blendv_ps(best_positions, indexes, blend_mask);
+      j = n;
+    }
+#endif
+    if (j != 0) {
+      __m128 lower_costs;
+      __m128 lower_positions;
+      __m128 upper_costs;
+      __m128 upper_positions;
+      __m128 blend_mask;
+      lower_costs = _mm256_castps256_ps128(best_costs);
+      lower_positions = _mm256_castps256_ps128(best_positions);
+      upper_costs = _mm256_extractf128_ps(best_costs, 1);
+      upper_positions = _mm256_extractf128_ps(best_positions, 1);
+      blend_mask = _mm_cmp_ps(upper_costs, lower_costs, _CMP_GT_OS);
+
+      blend_mask = _mm_or_ps(blend_mask, _mm_and_ps(
+        _mm_cmp_ps(upper_positions, lower_positions, _CMP_LT_OS),
+        _mm_cmp_ps(upper_costs, lower_costs, _CMP_EQ_OS)));
+
+      lower_costs = _mm_blendv_ps(lower_costs, upper_costs, blend_mask);
+      lower_positions = _mm_blendv_ps(lower_positions, upper_positions, blend_mask);
+      upper_costs = _mm_shuffle_ps(lower_costs, lower_costs, _MM_SHUFFLE(0, 1, 2, 3));
+      upper_positions = _mm_shuffle_ps(lower_positions, lower_positions, _MM_SHUFFLE(0, 1, 2, 3));
+      blend_mask = _mm_cmp_ps(upper_costs, lower_costs, _CMP_GT_OS);
+
+      blend_mask = _mm_or_ps(blend_mask, _mm_and_ps(
+        _mm_cmp_ps(upper_positions, lower_positions, _CMP_LT_OS),
+        _mm_cmp_ps(upper_costs, lower_costs, _CMP_EQ_OS)));
+
+      lower_costs = _mm_blendv_ps(lower_costs, upper_costs, blend_mask);
+      lower_positions = _mm_blendv_ps(lower_positions, upper_positions, blend_mask);
+      upper_costs = _mm_shuffle_ps(lower_costs, lower_costs, _MM_SHUFFLE(0, 1, 0, 1));
+      upper_positions = _mm_shuffle_ps(lower_positions, lower_positions, _MM_SHUFFLE(0, 1, 0, 1));
+      blend_mask = _mm_cmp_ss(upper_costs, lower_costs, _CMP_GT_OS);
+
+      blend_mask = _mm_or_ps(blend_mask, _mm_and_ps(
+        _mm_cmp_ss(upper_positions, lower_positions, _CMP_LT_OS),
+        _mm_cmp_ss(upper_costs, lower_costs, _CMP_EQ_OS)));
+
+      best_cost = _mm_blendv_ps(lower_costs, upper_costs, blend_mask);
+      lower_positions = _mm_blendv_ps(lower_positions, upper_positions, blend_mask);
+      pos = _mm_cvtss_si32(lower_positions);
+    }
+#endif
+/*
+    for (; j < n; j++) {
+      __m128 index;
+      __m128d tmp_xy_sd;
+      __m128 tmp_xy;
+      __m128 tmp_yy;
+      index = _mm_set_ss(j);
+      tmp_yy = _mm_set_ss(2*ypulse[j]);
+      tmp_yy = _mm_add_ss(tmp_yy, _mm256_castps256_ps128(yy_vec));
+      __m128 input = tmp_yy;
+       tmp_yy = _mm_rsqrt_ss(tmp_yy);
+#ifdef ENHANCED_INV_SQRT
+     __m128 almostOne = _mm_mul_ss(input, _mm_mul_ss(tmp_yy, tmp_yy));
+      tmp_yy = _mm_mul_ss(_mm_set1_ps(.5), tmp_yy);
+      tmp_yy = _mm_mul_ss(tmp_yy, _mm_sub_ss(_mm_set1_ps(3), almostOne));
+#endif
+      tmp_xy_sd = _mm_load_sd(x + j);
+      tmp_xy = _mm_cvtsd_ss(_mm_setzero_ps(), tmp_xy_sd);
+      tmp_xy = _mm_add_ss(tmp_xy, _mm256_castps256_ps128(xy_vec));
+      tmp_xy = _mm_mul_ss(tmp_xy, tmp_yy);
+      tmp_xy = _mm_fnmadd_ss(index, _mm256_castps256_ps128(delta_rate_vec), tmp_xy);
+      if (_mm_ucomigt_ss(tmp_xy, best_cost)) {
+        best_cost = tmp_xy;
+        pos = j;
+      }
+    }
+*/
+    xy = xy + x[pos];
+    yy = yy + 2*ypulse[pos] + 1;
+    ypulse[pos]++;
+  }
+#endif
   for (i = 0; i < n; i++) {
     if (xcoeff[i] < 0) ypulse[i] = -ypulse[i];
   }
@@ -219,6 +605,30 @@ int od_vector_is_null(const od_coeff *x, int len) {
   return 1;
 }
 
+static double fast_log(double x)
+{
+#if 0
+  return log(x);
+#else
+  int exp;
+  double sig;
+  double out;
+  double tmp;
+  sig = frexp(x, &exp) * 2;
+  out = exp-1;
+  if (sig > M_SQRT2) {
+    out += .5;
+    sig *= M_SQRT1_2;
+  }
+  sig -= 1;
+  out *= M_LN2;
+  out += sig;
+  tmp = sig*sig;
+  out -= .5*tmp;
+  return out;
+#endif
+}
+
 static double od_pvq_rate(int qg, int icgr, int theta, int ts,
  const od_adapt_ctx *adapt, const od_coeff *y0, int k, int n,
  int is_keyframe, int pli, int speed) {
@@ -235,7 +645,7 @@ static double od_pvq_rate(int qg, int icgr, int theta, int ts,
     /* Estimates the number of bits it will cost to encode K pulses in
        N dimensions based on hand-tuned fit for bitrate vs K, N and
        "center of mass". */
-    rate = (1 + .4*f)*n*OD_LOG2(1 + OD_MAXF(0, log(n*2*(1*f + .025))*k/n)) + 3;
+    rate = (1 + .4*f)*n*M_LOG2E*fast_log(1 + OD_MAXF(0, fast_log(n*2*(1*f + .025))*k/n)) + 3;
   }
   else {
     od_ec_enc ec;
@@ -250,7 +660,7 @@ static double od_pvq_rate(int qg, int icgr, int theta, int ts,
   }
   if (qg > 0 && theta >= 0) {
     /* Approximate cost of entropy-coding theta */
-    rate += .9*OD_LOG2(ts);
+    rate += .9*M_LOG2E*fast_log(ts);
     /* Adding a cost to using the H/V pred because it's going to be off
        most of the time. Cost is optimized on subset1, while making
        sure we don't hurt the checkerboard image too much.

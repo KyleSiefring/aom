@@ -138,6 +138,8 @@ $(BUILD_PFX)%_avx.c.d: CFLAGS += -mavx
 $(BUILD_PFX)%_avx.c.o: CFLAGS += -mavx
 $(BUILD_PFX)%_avx2.c.d: CFLAGS += -mavx2
 $(BUILD_PFX)%_avx2.c.o: CFLAGS += -mavx2
+av1/encoder/pvq_encoder.c.d: CFLAGS += -mavx2 -mfma
+av1/encoder/pvq_encoder.c.o: CFLAGS += -mavx2 -mfma
 
 $(BUILD_PFX)%.c.d: %.c
 	$(if $(quiet),@echo "    [DEP] $@")
