@@ -431,6 +431,9 @@ void quantize_64x64_fp_nuq_c(const tran_low_t *coeff_ptr, intptr_t n_coeffs,
 #endif  // CONFIG_TX64X64
 #endif  // CONFIG_NEW_QUANT
 
+# define OD_DIV_POW2(dividend, shift) \
+(((dividend) + (OD_SIGNMASK(dividend) & ((1 << (shift))-1))) >> (shift))
+
 void av1_quantize_skip(intptr_t n_coeffs, tran_low_t *qcoeff_ptr,
                        tran_low_t *dqcoeff_ptr, uint16_t *eob_ptr) {
   memset(qcoeff_ptr, 0, n_coeffs * sizeof(*qcoeff_ptr));
@@ -490,8 +493,10 @@ static void quantize_fp_helper_c(
 #else
         tmp32 = (int)((abs_coeff * quant_ptr[rc != 0]) >> (16 - log_scale));
         qcoeff_ptr[rc] = (tmp32 ^ coeff_sign) - coeff_sign;
+        /*dqcoeff_ptr[rc] =
+            qcoeff_ptr[rc] * dequant_ptr[rc != 0] / (1 << log_scale);*/
         dqcoeff_ptr[rc] =
-            qcoeff_ptr[rc] * dequant_ptr[rc != 0] / (1 << log_scale);
+            OD_DIV_POW2(qcoeff_ptr[rc] * dequant_ptr[rc != 0], log_scale);
 #endif
       }
 
