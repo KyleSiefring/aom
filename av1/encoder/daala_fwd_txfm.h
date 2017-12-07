@@ -18,7 +18,7 @@
 extern "C" {
 #endif
 
-void daala_fwd_txfm(const int16_t *src_diff, tran_low_t *coeff, int diff_stride,
+void daala_fwd_txfm_c(const int16_t *src_diff, tran_low_t *coeff, int diff_stride,
                     TxfmParam *txfm_param);
 
 #ifdef __cplusplus

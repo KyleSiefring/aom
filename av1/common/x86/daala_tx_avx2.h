@@ -29,6 +29,15 @@ static INLINE __m256i od_mm256_unbiased_rshift1_epi32(__m256i a) {
   return _mm256_srai_epi32(_mm256_add_epi32(_mm256_srli_epi32(a, 31), a), 1);
 }
 
+static INLINE __m128i od_avg_epi32(__m128i a, __m128i b) {
+  __m128i neg1;
+  /* It's cheaper to generate -1's than 1's. */
+  neg1 = _mm_set1_epi64x(-1);
+  /* There is no corresponding PAVGD, but we are not in danger of overflowing
+     a 32-bit register. */
+  return _mm_srai_epi32(_mm_add_epi32(a, _mm_sub_epi32(b, neg1)), 1);
+}
+
 static INLINE __m128i od_avg_epi16(__m128i a, __m128i b) {
   __m128i sign_bit;
   /*x86 only provides an unsigned PAVGW with a bias (ARM is better here).
@@ -344,6 +353,34 @@ static INLINE void od_store_buffer_2x16_epi16(int16_t *out, __m256i r0,
   _mm256_storeu_si256((__m256i *)out + 1, r1);
 }
 
+/* Stores a 4x4 buffer of 32-bit values from four SSE registers.
+   Each register holds two rows of values. */
+static INLINE void od_store_buffer_4x4_epi32(tran_low_t *out, __m128i q0,
+                                             __m128i q1, __m128i q2,
+                                             __m128i q3) {
+  _mm_storeu_si128((__m128i *)out + 0, q0);
+  _mm_storeu_si128((__m128i *)out + 1, q1);
+  _mm_storeu_si128((__m128i *)out + 2, q2);
+  _mm_storeu_si128((__m128i *)out + 3, q3);
+}
+
+/* Stores a 8x4 buffer of 32-bit values from four SSE registers.
+   Each register holds two rows of values. */
+static INLINE void od_store_buffer_8x4_epi32(tran_low_t *out, __m128i q0,
+                                             __m128i q1, __m128i q2,
+                                             __m128i q3, __m128i q4,
+                                             __m128i q5, __m128i q6,
+                                             __m128i q7) {
+  _mm_storeu_si128((__m128i *)out + 0, q0);
+  _mm_storeu_si128((__m128i *)out + 1, q1);
+  _mm_storeu_si128((__m128i *)out + 2, q2);
+  _mm_storeu_si128((__m128i *)out + 3, q3);
+  _mm_storeu_si128((__m128i *)out + 4, q4);
+  _mm_storeu_si128((__m128i *)out + 5, q5);
+  _mm_storeu_si128((__m128i *)out + 6, q6);
+  _mm_storeu_si128((__m128i *)out + 7, q7);
+}
+
 /* Loads a 4x4 buffer of 16-bit values, adds a 4x4 block of 16-bit values to
    them, clamps to high bit depth, and stores the sum back. */
 static INLINE void od_add_store_buffer_hbd_4x4_epi16(void *output_pixels,
@@ -488,7 +525,7 @@ static INLINE void od_transpose_pack4x4(__m128i *q0, __m128i *q1, __m128i *q2,
   *q3 = _mm_unpackhi_epi64(*q2, *q2);
 }
 
-static INLINE void od_transpose4x4(__m128i *q0, __m128i q1, __m128i *q2,
+static INLINE void od_transpose_compact4x4(__m128i *q0, __m128i q1, __m128i *q2,
                                    __m128i q3) {
   __m128i a;
   __m128i b;
@@ -525,10 +562,10 @@ static inline void od_transpose4x8(__m128i *r0, __m128i r1, __m128i *r2,
   */
   /* r0: r13 r12 11 r10 r03 r02 r01 r00
      r2: r33 r32 31 r30 r23 r22 r21 r20 */
-  od_transpose4x4(r0, r1, r2, r3);
+  od_transpose_compact4x4(r0, r1, r2, r3);
   /* r4: r17 r16 15 r14 r07 r06 r05 r04
      r6: r37 r36 35 r34 r27 r26 r25 r24 */
-  od_transpose4x4(r4, r5, r6, r7);
+  od_transpose_compact4x4(r4, r5, r6, r7);
   a = *r0;
   b = *r2;
   /* r0: r07 r06 r05 r04 r04 r02 r01 r00 */
