@@ -45,8 +45,8 @@ static int tx_flip(TX_TYPE_1D t) { return t == 2; }
 // and high-bitdepth TX (av1_fwd_txfm and av1_highbd_fwd_txfm).  This
 // same function is intended for both low and high bitdepth cases with
 // a tran_low_t of 32 bits (matching od_coeff).
-void daala_fwd_txfm(const int16_t *input_pixels, tran_low_t *output_coeffs,
-                    int input_stride, TxfmParam *txfm_param) {
+void daala_fwd_txfm_c(const int16_t *input_pixels, tran_low_t *output_coeffs,
+                      int input_stride, TxfmParam *txfm_param) {
   const TX_SIZE tx_size = txfm_param->tx_size;
   const TX_TYPE tx_type = txfm_param->tx_type;
   assert(tx_size <= TX_SIZES_ALL);
