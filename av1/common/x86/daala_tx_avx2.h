@@ -564,10 +564,10 @@ static inline void od_transpose4x8(__m128i *r0, __m128i r1, __m128i *r2,
   */
   /* r0: r13 r12 11 r10 r03 r02 r01 r00
      r2: r33 r32 31 r30 r23 r22 r21 r20 */
-  od_transpose_compact4x4(r0, r1, r2, r3);
+  od_transpose4x4(r0, r1, r2, r3);
   /* r4: r17 r16 15 r14 r07 r06 r05 r04
      r6: r37 r36 35 r34 r27 r26 r25 r24 */
-  od_transpose_compact4x4(r4, r5, r6, r7);
+  od_transpose4x4(r4, r5, r6, r7);
   a = *r0;
   b = *r2;
   /* r0: r07 r06 r05 r04 r04 r02 r01 r00 */
