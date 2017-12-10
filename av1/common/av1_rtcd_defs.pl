@@ -637,6 +637,8 @@ if (aom_config("CONFIG_INTRA_EDGE") eq "yes") {
 if (aom_config("CONFIG_DAALA_TX") eq "yes") {
   add_proto qw/void daala_inv_txfm_add/, "const tran_low_t *input_coeffs, void *output_pixels, int output_stride, TxfmParam *txfm_param";
   specialize qw/daala_inv_txfm_add avx2/;
+  add_proto qw/void daala_fwd_txfm/, "const int16_t *input_pixels, tran_low_t *output_coeffs, int input_stride, TxfmParam *txfm_param";
+  specialize qw/daala_fwd_txfm avx2/;
 }
 
 1;

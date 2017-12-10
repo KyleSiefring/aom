@@ -29,6 +29,7 @@ AV1_CX_SRCS-yes += encoder/cost.h
 AV1_CX_SRCS-yes += encoder/cost.c
 AV1_CX_SRCS-yes += encoder/daala_fwd_txfm.c
 AV1_CX_SRCS-yes += encoder/daala_fwd_txfm.h
+AV1_CX_SRCS-$(HAVE_AVX2) += encoder/x86/daala_fwd_txfm_avx2.c
 AV1_CX_SRCS-yes += encoder/dct.c
 AV1_CX_SRCS-yes += encoder/hybrid_fwd_txfm.c
 AV1_CX_SRCS-yes += encoder/hybrid_fwd_txfm.h
