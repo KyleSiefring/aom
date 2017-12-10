@@ -29,9 +29,9 @@ static INLINE void od_8x4_cvtepi16_epi32(__m128i *q0, __m128i *q1, __m128i *q2, 
   *q3 = _mm_unpacklo_epi16(*q3, sign3);
 }
 
-/* Loads a 4x4 buffer of 16-bit values into four SSE registers. */
-static INLINE void od_load_buffer_hbd_4x4_epi16(__m128i *q0, __m128i *q1,
-                                            __m128i *q2, __m128i *q3,
+/* Loads a 4x4 buffer of 16-bit values, shifts them up to full bit depth, and
+   puts them into four SSE registers. */
+static INLINE void od_load_buffer_hbd_4x4_epi16(__m128i *q0, __m128i *q1, __m128i *q2, __m128i *q3,
                                             const int16_t *in, int input_stride, int bd) {
   const int upshift = TX_COEFF_DEPTH - bd;
   *q0 = _mm_loadl_epi64((const __m128i *)(in + 0 * input_stride));
@@ -44,6 +44,8 @@ static INLINE void od_load_buffer_hbd_4x4_epi16(__m128i *q0, __m128i *q1,
   *q3 = _mm_slli_epi16(*q3, upshift);
 }
 
+/* Loads a 8x4 buffer of 16-bit values, shifts them up to full bit depth, and
+   puts them into four SSE registers. */
 static INLINE void od_load_buffer_hbd_8x4_epi16(__m128i *q0, __m128i *q1, __m128i *q2, __m128i *q3,
                                             const int16_t *in, int input_stride, int bd) {
   const int upshift = TX_COEFF_DEPTH - bd;
@@ -57,6 +59,7 @@ static INLINE void od_load_buffer_hbd_8x4_epi16(__m128i *q0, __m128i *q1, __m128
   *q3 = _mm_slli_epi16(*q3, upshift);
 }
 
+/* Transpose 4x4 16-bit value and then convert them to 32-bits. */
 static INLINE void od_transpose_unpack4x4(__m128i *q0, __m128i *q1, __m128i *q2,
                                    __m128i *q3) {
   const __m128i zero = _mm_setzero_si128();
@@ -107,7 +110,6 @@ static void od_row_tx4_avx2(tran_low_t *output_coeffs,
   __m128i q2;
   __m128i q3;
   if (rows <= 4) {
-    __m128i ext[2];
     od_load_buffer_4x4_epi16(&q0, &q1, &q2, &q3, in);
     kernel8(&q0, &q1, &q2, &q3);
     /*TODO(any): Merge this transpose with coefficient scanning.*/
@@ -117,7 +119,7 @@ static void od_row_tx4_avx2(tran_low_t *output_coeffs,
     __m128i ext[4];
     /* Higher row count unimplemented.*/
     assert(rows <= 8);
-    od_load_buffer_8x4_epi16(&q0, &q1, &q2, &q3, in + r, rows);
+    od_load_buffer_8x4_epi16(&q0, &q1, &q2, &q3, in, rows);
     kernel8(&q0, &q1, &q2, &q3);
     /*TODO(any): Merge this transpose with coefficient scanning.*/
     od_transpose8x4(&q0, &q2, &q1, &q3);
@@ -245,9 +247,9 @@ static const daala_row_ftx TX_ROW_MAP[TX_SIZES][TX_TYPES] = {
 
 /* Define this to verify the SIMD against the C versions of the transforms.
    This is intended to be replaced by real unit tests in the future. */
+// TODO Remember
 #define DAALA_TX_VERIFY_SIMD
 
-// TODO This function is stripped of comments.
 void daala_fwd_txfm_avx2(const int16_t *input_pixels, tran_low_t *output_coeffs,
                          int input_stride, TxfmParam *txfm_param) {
   //const TX_SIZE tx_size = txfm_param->tx_size;
@@ -275,7 +277,7 @@ void daala_fwd_txfm_avx2(const int16_t *input_pixels, tran_low_t *output_coeffs,
     daala_row_ftx row_tx = TX_ROW_MAP[row_idx][htx_tab[tx_type]];
 
     int16_t tmpsq[MAX_TX_SQUARE];
-    if (col_tx == NULL || row_tx == NULL/* || (col_idx == row_idx && col_idx == 1)*/) {
+    if (col_tx == NULL || row_tx == NULL) {
       daala_fwd_txfm_c(input_pixels, output_coeffs, input_stride, txfm_param);
     } else {
       const int cols = tx_size_wide[tx_size];
