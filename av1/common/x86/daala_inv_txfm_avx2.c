@@ -118,7 +118,7 @@ static void od_row_tx4_avx2(int16_t *out, int rows, const tran_low_t *in,
     /*TODO(any): Merge this transpose with coefficient scanning.*/
     od_transpose_pack4x4(&q0, &q1, &q2, &q3);
     kernel8(&q0, &q1, &q2, &q3);
-    od_transpose_compact4x4(&q0, q2, &q1, q3);
+    od_transpose4x4(&q0, q2, &q1, q3);
     od_store_buffer_4x4_epi16(out, q0, q1);
   } else {
     int r;

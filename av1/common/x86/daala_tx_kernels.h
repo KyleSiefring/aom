@@ -34,6 +34,16 @@
   OD_KERNEL_FUNC_IMPL(name, kernel, word)
 #define OD_KERNEL_FUNC(name) OD_KERNEL_FUNC_WRAPPER(name, OD_KERNEL, OD_WORD)
 
+static INLINE void OD_KERNEL_FUNC(od_fdct2)(OD_REG *p0, OD_REG *p1) {
+  OD_REG t_;
+  t_ = OD_HRSUB(*p0, *p1);
+  /* 46341/32768 ~= 2*Sin[Pi/4] = 1.4142135623730951 */
+  *p0 = OD_MUL(*p1, 46341, 15);
+  /* 46341/32768 ~= 2*Cos[Pi/4] = 1.4142135623730951 */
+  *p1 = OD_MUL(t_, 46341, 15);
+  *p0 = OD_ADD(*p0, *p1);
+}
+
 static INLINE void OD_KERNEL_FUNC(od_idct2)(OD_REG *p0, OD_REG *p1) {
   OD_REG t_;
   t_ = OD_ADD(*p0, *p1);
@@ -44,7 +54,7 @@ static INLINE void OD_KERNEL_FUNC(od_idct2)(OD_REG *p0, OD_REG *p1) {
   *p1 = OD_SUB(*p1, *p0);
 }
 
-static INLINE void OD_KERNEL_FUNC(od_idst2)(OD_REG *p0, OD_REG *p1) {
+static INLINE void OD_KERNEL_FUNC(od_fdst2)(OD_REG *p0, OD_REG *p1) {
   OD_REG t_;
   OD_REG u_;
   t_ = OD_AVG(*p0, *p1);
@@ -56,6 +66,10 @@ static INLINE void OD_KERNEL_FUNC(od_idst2)(OD_REG *p0, OD_REG *p1) {
   t_ = OD_MUL(t_, 3135, 12);
   *p0 = OD_ADD(*p0, t_);
   *p1 = OD_SUB(u_, t_);
+}
+
+static INLINE void OD_KERNEL_FUNC(od_idst2)(OD_REG *p0, OD_REG *p1) {
+  OD_KERNEL_FUNC(od_fdst2)(p0, p1);
 }
 
 static INLINE void OD_KERNEL_FUNC(od_fdct2_asym)(OD_REG *p0, OD_REG *p1,
@@ -141,7 +155,7 @@ static INLINE void OD_KERNEL_FUNC(od_idct4)(OD_REG *q0, OD_REG *q2, OD_REG *q1,
   while (0)
 */
 
-static INLINE void OD_KERNEL_FUNC(od_fdct4)(OD_REG *q0, OD_REG *q2, OD_REG *q1,
+static INLINE void OD_KERNEL_FUNC(od_fdct4)(OD_REG *q0, OD_REG *q1, OD_REG *q2,
                                             OD_REG *q3) {
   OD_REG q1h;
   OD_REG q3h;
@@ -153,6 +167,30 @@ static INLINE void OD_KERNEL_FUNC(od_fdct4)(OD_REG *q0, OD_REG *q2, OD_REG *q1,
   *q2 = OD_SUB(*q2, q1h);
   OD_KERNEL_FUNC(od_fdct2_asym)(q0, q1, q1h);
   OD_KERNEL_FUNC(od_fdst2_asym)(q3, q3h, q2);
+}
+
+/*
+#define OD_FDCT_4_ASYM_FLAT(q0, q1, q1h, q2, q3, q3h) \
+  do { \
+    q0 += q3h; \
+    q3 = q0 - q3; \
+    q2 -= q1h; \
+    q1 += q2; \
+    OD_FDCT_2_FLAT(q0, q1); \
+    OD_FDST_2_FLAT(q3, q2); \
+  } \
+  while (0)
+*/
+
+static INLINE void OD_KERNEL_FUNC(od_fdct4_asym)(OD_REG *q0, OD_REG *q1,
+                                                 OD_REG q1h, OD_REG *q2,
+                                                 OD_REG *q3, OD_REG q3h) {
+  *q0 = OD_ADD(*q0, q3h);
+  *q3 = OD_SUB(*q0, *q3);
+  *q2 = OD_SUB(*q2, q1h);
+  *q1 = OD_ADD(*q1, *q2);
+  OD_KERNEL_FUNC(od_fdct2)(q0, q1);
+  OD_KERNEL_FUNC(od_fdst2)(q3, q2);
 }
 
 static INLINE void OD_KERNEL_FUNC(od_idct4_asym)(OD_REG *q0, OD_REG *q2,
@@ -247,6 +285,77 @@ static INLINE void OD_KERNEL_FUNC(od_idst4)(OD_REG *q0, OD_REG *q1, OD_REG *q2,
   *q3 = OD_ADD(*q3, t_);
 }
 
+
+#define OD_FDST_4_ASYM_FLAT(q0, q0h, q1, q2, q2h, q3) \
+  /* Embedded 4-point asymmetric Type-IV fDST with flattened rotations. */ \
+  do { \
+    int t_; \
+    int u_; \
+    t_ = q0h - q3; \
+    /* 38531/32768 ~= Sin[7*Pi/16] + Cos[7*Pi/16] ~= 1.1758756024193586 */ \
+    u_ = (q3*38531 + 16384) >> 15; \
+    /* 12873/16384 ~= Sin[7*Pi/16] - Cos[7*Pi/16] ~= 0.7856949583871022 */ \
+    q3 = (q0*12873 + 8192) >> 14; \
+    /* 12785/32768 ~= 2*Cos[7*Pi/16] ~= 0.3901806440322565 */ \
+    t_ = (t_*12785 + 16384) >> 15; \
+    q0 = u_ + OD_RSHIFT1(t_); \
+    q3 += t_; \
+    t_ = q1 + q2h; \
+    /* 45451/32768 ~= Sin[5*Pi/16] + Cos[5*Pi/16] ~= 1.3870398453221475 */ \
+    u_ = (q1*45451 + 16384) >> 15; \
+    /* 9041/32768 ~= Sin[5*Pi/16] - Cos[5*Pi/16] ~= 0.27589937928294306 */ \
+    q1 = (q2*9041 + 16384) >> 15; \
+    /* 18205/16384 ~= 2*Cos[5*Pi/16] ~= 1.1111404660392044 */ \
+    t_ = (t_*18205 + 8192) >> 14; \
+    q1 += t_; \
+    q2 = u_ - OD_RSHIFT1(t_); \
+    q2 += OD_RSHIFT1(q3); \
+    q3 -= q2; \
+    q0 += OD_RSHIFT1(q1); \
+    q1 -= q0; \
+    t_ = (q1 + q2 + 1) >> 1; \
+    /* 11585/8192 ~= 2*Sin[Pi/4] ~= 1.4142135623730951 */ \
+    q1 = (q2*11585 + 4096) >> 13; \
+    /* 11585/8192 ~= 2*Cos[Pi/4] ~= 1.4142135623730951 */ \
+    q2 = (t_*11585 + 4096) >> 13; \
+    q1 -= q2; \
+  } \
+  while (0)
+
+static INLINE void OD_KERNEL_FUNC(od_fdst4_asym)(OD_REG *q0, OD_REG q0h, OD_REG *q1,
+                                                 OD_REG *q2, OD_REG q2h, OD_REG *q3) {
+  OD_REG t_;
+  OD_REG u_;
+  t_ = OD_SUB(q0h, *q3);
+  /* 38531/32768 ~= Sin[7*Pi/16] + Cos[7*Pi/16] ~= 1.1758756024193586 */
+  u_ = OD_MUL(*q3, 38531, 15);
+  /* 12873/16384 ~= Sin[7*Pi/16] - Cos[7*Pi/16] ~= 0.7856949583871022 */
+  *q3 = OD_MUL(*q0, 12873, 14);
+  /* 12785/32768 ~= 2*Cos[7*Pi/16] ~= 0.3901806440322565 */
+  t_ = OD_MUL(t_, 12785, 15);
+  *q0 = OD_ADD(u_, OD_RSHIFT1(t_));
+  *q3 = OD_ADD(*q3, t_);
+  t_ = OD_ADD(*q1, q2h);
+  /* 45451/32768 ~= Sin[5*Pi/16] + Cos[5*Pi/16] ~= 1.3870398453221475 */
+  u_ = OD_MUL(*q1, 45451, 15);
+  /* 9041/32768 ~= Sin[5*Pi/16] - Cos[5*Pi/16] ~= 0.27589937928294306 */
+  *q1 = OD_MUL(*q2, 9041, 15);
+  /* 18205/16384 ~= 2*Cos[5*Pi/16] ~= 1.1111404660392044 */
+  t_ = OD_MUL(t_, 18205, 14);
+  *q1 = OD_ADD(*q1, t_);
+  *q2 = OD_SUB(u_, OD_RSHIFT1(t_));
+  *q2 = OD_ADD(*q2, OD_RSHIFT1(*q3));
+  *q3 = OD_SUB(*q3, *q2);
+  *q0 = OD_ADD(*q0, OD_RSHIFT1(*q1));
+  *q1 = OD_SUB(*q1, *q0);
+  t_ = OD_AVG(*q1, *q2);
+  /* 11585/8192 ~= 2*Sin[Pi/4] ~= 1.4142135623730951 */
+  *q1 = OD_MUL(*q2, 11585, 13);
+  /* 11585/8192 ~= 2*Cos[Pi/4] ~= 1.4142135623730951 */
+  *q2 = OD_MUL(t_, 11585, 13);
+  *q1 = OD_SUB(*q1, *q2);
+}
+
 static INLINE void OD_KERNEL_FUNC(od_idst4_asym)(OD_REG *q0, OD_REG *q2,
                                                  OD_REG *q1, OD_REG *q3) {
   OD_REG t_;
@@ -283,6 +392,54 @@ static INLINE void OD_KERNEL_FUNC(od_idst4_asym)(OD_REG *q0, OD_REG *q2,
   t_ = OD_MUL(t_, 12785, 15);
   *q3 = OD_ADD(*q3, OD_RSHIFT1(t_));
   *q0 = OD_ADD(u_, t_);
+}
+
+/*
+#define OD_FDCT_8_FLAT(r0, r1, r2, r3, r4, r5, r6, r7) \
+  do { \
+    int r1h; \
+    int r3h; \
+    int r5h; \
+    int r7h; \
+    r7 = r0 - r7; \
+    r7h = OD_RSHIFT1(r7); \
+    r0 -= r7h; \
+    r1 += r6; \
+    r1h = OD_RSHIFT1(r1); \
+    r6 -= r1h; \
+    r5 = r2 - r5; \
+    r5h = OD_RSHIFT1(r5); \
+    r2 -= r5h; \
+    r3 += r4; \
+    r3h = OD_RSHIFT1(r3); \
+    r4 -= r3h; \
+    OD_FDCT_4_ASYM_FLAT(r0, r1, r1h, r2, r3, r3h); \
+    OD_FDST_4_ASYM_FLAT(r7, r7h, r6, r5, r5h, r4); \
+  } \
+  while (0)
+*/
+
+static INLINE void OD_KERNEL_FUNC(od_fdct8)(OD_REG *r0, OD_REG *r1, OD_REG *r2,
+                                            OD_REG *r3, OD_REG *r4, OD_REG *r5,
+                                            OD_REG *r6, OD_REG *r7) {
+  OD_REG r1h;
+  OD_REG r3h;
+  OD_REG r5h;
+  OD_REG r7h;
+  *r7 = OD_SUB(*r0, *r7);
+  r7h = OD_RSHIFT1(*r7);
+  *r0 = OD_SUB(*r0, r7h);
+  *r1 = OD_ADD(*r1, *r6);
+  r1h = OD_RSHIFT1(*r1);
+  *r6 = OD_SUB(*r6, r1h);
+  *r5 = OD_SUB(*r2, *r5);
+  r5h = OD_RSHIFT1(*r5);
+  *r2 = OD_SUB(*r2, r5h);
+  *r3 = OD_ADD(*r3, *r4);
+  r3h = OD_RSHIFT1(*r3);
+  *r4 = OD_SUB(*r4, r3h);
+  OD_KERNEL_FUNC(od_fdct4_asym)(r0, r1, r1h, r2, r3, r3h);
+  OD_KERNEL_FUNC(od_fdst4_asym)(r7, r7h, r6, r5, r5h, r4);
 }
 
 static INLINE void OD_KERNEL_FUNC(od_idct8)(OD_REG *r0, OD_REG *r4, OD_REG *r2,

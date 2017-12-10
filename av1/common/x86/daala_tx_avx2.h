@@ -65,6 +65,8 @@ static INLINE __m256i od_mm256_avg_epi32(__m256i a, __m256i b) {
   /* There is no corresponding PAVGD, but we are not in danger of overflowing
      a 32-bit register. */
   return _mm256_srai_epi32(_mm256_add_epi32(a, _mm256_sub_epi32(b, neg1)), 1);
+  //(a+b+1) >> 1
+  //_mm256_srai_epi32(_mm256_sub_epi32(b, _mm256_xor_epi32(a, neg1)), 1);
 }
 
 /*Like the above, but does (a - b + 1) >> 1 instead.*/
@@ -525,7 +527,7 @@ static INLINE void od_transpose_pack4x4(__m128i *q0, __m128i *q1, __m128i *q2,
   *q3 = _mm_unpackhi_epi64(*q2, *q2);
 }
 
-static INLINE void od_transpose_compact4x4(__m128i *q0, __m128i q1, __m128i *q2,
+static INLINE void od_transpose4x4(__m128i *q0, __m128i q1, __m128i *q2,
                                    __m128i q3) {
   __m128i a;
   __m128i b;
