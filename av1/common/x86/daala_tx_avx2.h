@@ -30,15 +30,25 @@ static INLINE __m256i od_mm256_unbiased_rshift1_epi32(__m256i a) {
 }
 
 static INLINE __m128i od_avg_epi16(__m128i a, __m128i b) {
-  __m128i sign_bit;
+  //__m128i sign_bit;
   /*x86 only provides an unsigned PAVGW with a bias (ARM is better here).
     We emulate a signed one by adding an offset to convert to unsigned and
     back. We use XOR instead of addition/subtraction because it dispatches
     better on older processors.*/
-  sign_bit = _mm_set1_epi16(0x8000);
+  /*sign_bit = _mm_set1_epi16(0x8000);
   return _mm_xor_si128(
       _mm_avg_epu16(_mm_xor_si128(a, sign_bit), _mm_xor_si128(b, sign_bit)),
-      sign_bit);
+      sign_bit);*/
+  // Will probably overflow
+  /*__m128i tmp = _mm_xor_si128(_mm_add_epi16(a, b), _mm_adds_epi16(a, b));
+  assert(_mm_test_all_zeros(tmp, tmp));*/
+  return _mm_srai_epi16(_mm_add_epi16(a, b), 1);
+  // TODO: Both untested
+  //return _mm_add_epi16(_mm_avg_epu16(a, _mm_or_si128(_mm_set1_epi16(0x0001), b)), _mm_avg_epu16(b, _mm_set1_epi16(0)));
+  //sign_bit = _mm_set1_epi16(0x8000);
+  //return _mm_xor_si128(_mm_avg_epu16(_mm_xor_si128(a, sign_bit),
+  //                                   _mm_sub_epi16(b, _mm_set1_epi16(0x8001))),
+  //                     sign_bit);
 }
 
 static INLINE __m256i od_mm256_avg_epi16(__m256i a, __m256i b) {
@@ -60,11 +70,15 @@ static INLINE __m256i od_mm256_avg_epi32(__m256i a, __m256i b) {
 
 /*Like the above, but does (a - b + 1) >> 1 instead.*/
 static INLINE __m128i od_hrsub_epi16(__m128i a, __m128i b) {
-  __m128i sign_bit;
+  /*__m128i sign_bit;
   sign_bit = _mm_set1_epi16(0x8000);
   return _mm_xor_si128(
       _mm_avg_epu16(_mm_xor_si128(a, sign_bit), _mm_sub_epi16(sign_bit, b)),
-      sign_bit);
+      sign_bit);*/
+  // Will probably overflow
+  /*__m128i tmp = _mm_xor_si128(_mm_sub_epi16(a, b), _mm_subs_epi16(a, b));
+  assert(_mm_test_all_zeros(tmp, tmp));*/
+  return _mm_srai_epi16(_mm_sub_epi16(a, b), 1);
 }
 
 static INLINE __m256i od_mm256_hrsub_epi16(__m256i a, __m256i b) {

@@ -189,12 +189,11 @@ static const daala_row_ftx TX_ROW_MAP[TX_SIZES][TX_TYPES] = {
 
 /* Define this to verify the SIMD against the C versions of the transforms.
    This is intended to be replaced by real unit tests in the future. */
-#undef DAALA_TX_VERIFY_SIMD
+#define DAALA_TX_VERIFY_SIMD
 
 void daala_fwd_txfm_avx2(const int16_t *input_pixels, tran_low_t *output_coeffs,
                          int input_stride, TxfmParam *txfm_param) {
-  // const TX_SIZE tx_size = txfm_param->tx_size;
-  TX_SIZE tx_size = txfm_param->tx_size;
+  const TX_SIZE tx_size = txfm_param->tx_size;
   const TX_TYPE tx_type = txfm_param->tx_type;
   assert(tx_size <= TX_SIZES_ALL);
   assert(tx_type <= TX_TYPES);
@@ -223,6 +222,7 @@ void daala_fwd_txfm_avx2(const int16_t *input_pixels, tran_low_t *output_coeffs,
     } else {
       const int cols = tx_size_wide[tx_size];
       const int rows = tx_size_high[tx_size];
+      // txfm_param->bd++;
       // Forward-transform columns
       col_tx(tmpsq, cols, input_pixels, input_stride, txfm_param->bd);
       // Forward-transform columns and sum with destination
@@ -230,6 +230,7 @@ void daala_fwd_txfm_avx2(const int16_t *input_pixels, tran_low_t *output_coeffs,
 #if defined(DAALA_TX_VERIFY_SIMD)
       tran_low_t out_check_buf[MAX_TX_SQUARE];
       daala_fwd_txfm_c(input_pixels, out_check_buf, input_stride, txfm_param);
+      // txfm_param->bd--;
       {
         int r;
         for (r = 0; r < rows; r++) {

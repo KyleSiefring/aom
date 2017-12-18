@@ -717,7 +717,8 @@ void daala_inv_txfm_add_avx2(const tran_low_t *input_coeffs,
         TX_COL_MAP[txfm_param->is_hbd][col_idx][vtx_tab[tx_type]];
     int16_t tmpsq[MAX_TX_SQUARE];
 
-    if (row_tx == NULL || col_tx == NULL) {
+    //if (row_tx == NULL || col_tx == NULL) {
+    if (1) {
       daala_inv_txfm_add_c(input_coeffs, output_pixels, output_stride,
                            txfm_param);
     } else {
