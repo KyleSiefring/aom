@@ -458,6 +458,12 @@ SIMD_INLINE v128 v128_shl_8(v128 a, unsigned int c) {
 SIMD_INLINE v128 v128_shr_u8(v128 a, unsigned int c) {
   return _mm_and_si128(_mm_set1_epi8(0xff >> c),
                        _mm_srl_epi16(a, _mm_cvtsi32_si128(c)));
+  /*__m128i mask = _mm_set1_epi16(0xff);
+  __m128i x = _mm_cvtsi32_si128(c);
+  return _mm_or_si128(_mm_srl_epi16(_mm_and_si128(mask, a), x),
+                      _mm_andnot_si128(mask, _mm_srl_epi16(a, x)));*/
+  //return _mm_packus_epi16(_mm_srl_epi16(_mm_unpacklo_epi8(a, a), x),
+  //                        _mm_srl_epi16(_mm_unpackhi_epi8(a, a), x));
 }
 
 SIMD_INLINE v128 v128_shr_s8(v128 a, unsigned int c) {
