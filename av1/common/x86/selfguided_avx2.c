@@ -52,11 +52,69 @@ static __m256i scan_32(__m256i x) {
   const __m256i x02 = _mm256_add_epi32(x, x01);
   const __m256i x03 = _mm256_slli_si256(x02, 8);
   const __m256i x04 = _mm256_add_epi32(x02, x03);
+  // shuffle32
+#if 0
+  const __m128i s01 = _mm256_castsi256_si128(x04);
+  const __m128i s02 = _mm_shuffle_epi32(s01, _MM_SHUFFLE(3, 3, 3, 3));
+  const __m256i s03 = _mm256_insertf128_si256(_mm256_setzero_si256(), s02, 1);
+  return _mm256_add_epi32(x04, s03);
+#else
   const int32_t s = _mm256_extract_epi32(x04, 3);
   const __m128i s01 = _mm_set1_epi32(s);
   const __m256i s02 = _mm256_insertf128_si256(_mm256_setzero_si256(), s01, 1);
   return _mm256_add_epi32(x04, s02);
+#endif
 }
+
+#if 0
+static __m256i scan_16(__m128i x) {
+  const __m128i lo1 = _mm_unpacklo_epi16(x, _mm_setzero_si128());
+  const __m128i hi1 = _mm_unpackhi_epi16(x, _mm_setzero_si128());
+  const __m128i lo2 = _mm_slli_si128(lo1, 4);
+  const __m128i hi2 = _mm_alignr_epi8(hi1, lo1, 16-4);
+  const __m128i lo3 = _mm_add_epi32(lo1, lo2);
+  const __m128i hi3 = _mm_add_epi32(hi1, hi2);
+  const __m128i lo4 = _mm_slli_si128(lo3, 8);
+  const __m128i hi4 = _mm_alignr_epi8(hi3, lo3, 16-8);
+  const __m128i res0 = _mm_add_epi32(lo3, lo4);
+  const __m128i hi5 = _mm_add_epi32(hi3, hi4);
+  const __m128i res1 = _mm_add_epi32(hi5, res0);
+  return _mm256_inserti128_si256(_mm256_castsi128_si256(res0), res1, 1);
+}
+#else
+static void scan_16(__m256i x, __m256i *out0, __m256i *out1) {
+  const __m256i lo1 = _mm256_unpacklo_epi16(x, _mm256_setzero_si256());
+  const __m256i hi1 = _mm256_unpackhi_epi16(x, _mm256_setzero_si256());
+  const __m256i lo2 = _mm256_slli_si256(lo1, 4);
+  const __m256i hi2 = _mm256_alignr_epi8(hi1, lo1, 16-4);
+  const __m256i lo3 = _mm256_add_epi32(lo1, lo2);
+  const __m256i hi3 = _mm256_add_epi32(hi1, hi2);
+  const __m256i lo4 = _mm256_slli_si256(lo3, 8);
+  const __m256i hi4 = _mm256_alignr_epi8(hi3, lo3, 16-8);
+  const __m256i res0 = _mm256_add_epi32(lo3, lo4);
+  const __m256i hi5 = _mm256_add_epi32(hi3, hi4);
+  *out0 = res0;
+  *out1 = _mm256_add_epi32(hi5, res0);
+}
+#endif
+
+#if 0
+static __m256i scan_8(__m128i x) {
+  const __m128i x01 = _mm_slli_si128(x, 3);
+  const __m128i x02 = _mm_mpsadbw_epu8(x01, _mm_setzero_si128(), 0);
+  const __m128i x03 = _mm_slli_si128(x02, 8);
+  const __m128i x04 = _mm_add_epi16(x02, x03);
+  return _mm256_cvtepu16_epi32(x04);
+}
+#else
+static __m256i scan_8(__m256i x) {
+  const __m256i x01 = _mm256_slli_si256(x, 3);
+  const __m256i x02 = _mm256_mpsadbw_epu8(x01, _mm256_setzero_si256(), 0);
+  const __m256i x03 = _mm256_slli_si256(x02, 8);
+  const __m256i x04 = _mm256_add_epi16(x02, x03);
+  return x04;
+}
+#endif
 
 // Compute two integral images from src. B sums elements; A sums their
 // squares. The images are offset by one pixel, so will have width and height
@@ -72,39 +130,64 @@ static void integral_images(const uint8_t *src, int src_stride, int width,
   memset(B, 0, sizeof(*B) * (width + 1));
 
   const __m256i zero = _mm256_setzero_si256();
-  for (int i = 0; i < height; ++i) {
+  for (int i = 0; i < height; i += 2) {
     // Zero the left column.
     A[(i + 1) * buf_stride] = B[(i + 1) * buf_stride] = 0;
+    A[(i + 2) * buf_stride] = B[(i + 2) * buf_stride] = 0;
 
     // ldiff is the difference H - D where H is the output sample immediately
     // to the left and D is the output sample above it. These are scalars,
     // replicated across the eight lanes.
-    __m256i ldiff1 = zero, ldiff2 = zero;
+    __m256i ldiff_sum = zero, ldiff_sq = zero;
     for (int j = 0; j < width; j += 8) {
+      __m256i row_lo, row_hi, row_sum0, row_sum1, row_sq0, row_sq1;
       const int ABj = 1 + j;
 
-      const __m256i above1 = yy_load_256(B + ABj + i * buf_stride);
-      const __m256i above2 = yy_load_256(A + ABj + i * buf_stride);
+      const __m256i above_sum = yy_load_256(B + ABj + i * buf_stride);
+      const __m256i above_sq = yy_load_256(A + ABj + i * buf_stride);
 
-      const __m256i x1 = yy256_load_extend_8_32(src + j + i * src_stride);
-      const __m256i x2 = _mm256_madd_epi16(x1, x1);
+      const __m256i x0 = _mm256_inserti128_si256(_mm256_castsi128_si256(
+          xx_loadl_64(src + j + i * src_stride)), xx_loadl_64(src + j + (i + 1) * src_stride), 1);
+      const __m256i x1 = _mm256_unpacklo_epi8(x0, zero);
+      const __m256i x2 = _mm256_mullo_epi16(x1, x1);
 
-      const __m256i sc1 = scan_32(x1);
-      const __m256i sc2 = scan_32(x2);
+      __m256i sc1 = scan_8(x0);
 
-      const __m256i row1 =
-          _mm256_add_epi32(_mm256_add_epi32(sc1, above1), ldiff1);
-      const __m256i row2 =
-          _mm256_add_epi32(_mm256_add_epi32(sc2, above2), ldiff2);
+      sc1 = _mm256_add_epi16(sc1, ldiff_sum);
+      ldiff_sum = _mm256_shuffle_epi8(sc1, _mm256_set1_epi16(14 | (15 << 8)));
+      row_lo = _mm256_unpacklo_epi16(sc1, zero);
+      row_hi = _mm256_unpackhi_epi16(sc1, zero);
+      row_sum0 = _mm256_permute2x128_si256(row_lo, row_hi, 0 | (2 << 4));
+      row_sum1 = _mm256_permute2x128_si256(row_lo, row_hi, 1 | (3 << 4));
+      row_sum0 = _mm256_add_epi32(row_sum0, above_sum);
+      row_sum1 = _mm256_add_epi32(row_sum1, row_sum0);
+      // Store i+2 first just incase buf_stride is small
+      yy_store_256(B + ABj + (i + 2) * buf_stride, row_sum1);
+      yy_store_256(B + ABj + (i + 1) * buf_stride, row_sum0);
 
-      yy_store_256(B + ABj + (i + 1) * buf_stride, row1);
-      yy_store_256(A + ABj + (i + 1) * buf_stride, row2);
+      scan_16(x2, &row_lo, &row_hi);
+
+      row_lo = _mm256_add_epi32(row_lo, ldiff_sq);
+      row_hi = _mm256_add_epi32(row_hi, ldiff_sq);
+      ldiff_sq = _mm256_shuffle_epi32(row_hi, _MM_SHUFFLE(3, 3, 3, 3));
+      row_sq0 = _mm256_permute2x128_si256(row_lo, row_hi, 0 | (2 << 4));
+      row_sq1 = _mm256_permute2x128_si256(row_lo, row_hi, 1 | (3 << 4));
+      row_sq0 = _mm256_add_epi32(row_sq0, above_sq);
+      row_sq1 = _mm256_add_epi32(row_sq1, row_sq0);
+
+      yy_store_256(A + ABj + (i + 2) * buf_stride, row_sq1);
+      yy_store_256(A + ABj + (i + 1) * buf_stride, row_sq0);
 
       // Calculate the new H - D.
+#if 0
       ldiff1 = _mm256_set1_epi32(
           _mm256_extract_epi32(_mm256_sub_epi32(row1, above1), 7));
       ldiff2 = _mm256_set1_epi32(
           _mm256_extract_epi32(_mm256_sub_epi32(row2, above2), 7));
+#else
+      //ldiff1 = _mm256_permutevar8x32_epi32(_mm256_sub_epi32(row1, above1), _mm256_set1_epi32(7));
+      //ldiff2 = _mm256_permutevar8x32_epi32(_mm256_sub_epi32(row2, above2), _mm256_set1_epi32(7));
+#endif
     }
   }
 }
@@ -159,7 +242,7 @@ static void integral_images_highbd(const uint16_t *src, int src_stride,
 
 // Compute four values of boxsum from the given integral image. ii should point
 // at the middle of the box (for the first value). r is the box radius
-static __m256i boxsum_from_ii(const int32_t *ii, int stride, int r) {
+static INLINE __m256i boxsum_from_ii(const int32_t *ii, int stride, int r) {
   const __m256i tl = yy_loadu_256(ii - (r + 1) - (r + 1) * stride);
   const __m256i tr = yy_loadu_256(ii + (r + 0) - (r + 1) * stride);
   const __m256i bl = yy_loadu_256(ii - (r + 1) + r * stride);
@@ -195,6 +278,92 @@ static __m256i compute_p(__m256i sum1, __m256i sum2, int bit_depth, int n) {
   return _mm256_sub_epi32(an, bb);
 }
 
+DECLARE_ALIGNED(32, static const uint8_t, x_by_xplus1_sub1_avx2[32]) = {
+  250, 123, 80, 59, 46, 38, 32, 27, 23, 21, 18, 16, 15, 13, 12, 11,
+  250, 123, 80, 59, 46, 38, 32, 27, 23, 21, 18, 16, 15, 13, 12, 11
+};
+
+DECLARE_ALIGNED(32, static const uint8_t, x_by_xplus1_sub2_avx2[32]) = {
+  10, 9, 8, 8, 7, 7, 6, 6, 5, 5, 4, 4, 4, 4, 3, 3,
+  10, 9, 8, 8, 7, 7, 6, 6, 5, 5, 4, 4, 4, 4, 3, 3
+};
+
+DECLARE_ALIGNED(32, static const uint8_t, x_by_xplus1_sub3_avx2[32]) = {
+  3, 3, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 0, 0,
+  3, 3, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 0, 0
+};
+
+static __m256i find_x_by_xplus1(__m256i z) {
+#if 1
+  __m256i zb, xzb, low_sub, search, cmp_sub, out;
+  const __m256i tbl1 = _mm256_load_si256((__m256i const *) x_by_xplus1_sub1_avx2);
+  const __m256i tbl2 = _mm256_load_si256((__m256i const *) x_by_xplus1_sub2_avx2);
+  const __m256i tbl3 = _mm256_load_si256((__m256i const *) x_by_xplus1_sub3_avx2);
+  // negative
+  zb = _mm256_packus_epi16(_mm256_packs_epi32(z, z), _mm256_packs_epi32(z, z));
+  xzb = _mm256_xor_si256(zb, _mm256_set1_epi8(128));
+  cmp_sub = _mm256_cmpgt_epi8(_mm256_set1_epi8(255 ^ 128), xzb);
+  cmp_sub = _mm256_add_epi8(cmp_sub, _mm256_cmpgt_epi8(_mm256_set1_epi8(170 ^ 128), xzb));
+  cmp_sub = _mm256_add_epi8(cmp_sub, _mm256_cmpgt_epi8(_mm256_set1_epi8(102 ^ 128), xzb));
+  cmp_sub = _mm256_add_epi8(cmp_sub, _mm256_cmpgt_epi8(_mm256_set1_epi8(73 ^ 128), xzb));
+  cmp_sub = _mm256_add_epi8(cmp_sub, _mm256_cmpgt_epi8(_mm256_set1_epi8(56 ^ 128), xzb));
+  // positive
+  search = _mm256_adds_epu8(zb, _mm256_set1_epi8(0x70));
+  low_sub = _mm256_shuffle_epi8(tbl1, search);
+  zb = _mm256_sub_epi8(zb, _mm256_set1_epi8(16));
+  search = _mm256_adds_epu8(zb, _mm256_set1_epi8(0x70));
+  low_sub = _mm256_or_si256(low_sub, _mm256_shuffle_epi8(tbl2, search));
+  zb = _mm256_sub_epi8(zb, _mm256_set1_epi8(16));
+  search = _mm256_adds_epu8(zb, _mm256_set1_epi8(0x70));
+  low_sub = _mm256_or_si256(low_sub, _mm256_shuffle_epi8(tbl3, search));
+
+  cmp_sub = _mm256_sub_epi8(low_sub, cmp_sub);
+  out = _mm256_unpacklo_epi8(cmp_sub, _mm256_setzero_si256());
+  out = _mm256_unpacklo_epi16(out, _mm256_setzero_si256());
+  out = _mm256_sub_epi32(_mm256_set1_epi32(256), out);
+  return out;
+#else
+  return _mm256_i32gather_epi32(x_by_xplus1, z, 4);
+#endif
+}
+
+static AOM_FORCE_INLINE void find_x_by_xplus1_x4(__m256i *z0, __m256i *z1, __m256i *z2, __m256i *z3) {
+  __m256i zb, xzb, low_sub, search, cmp_sub;
+  const __m256i tbl1 = _mm256_load_si256((__m256i const *) x_by_xplus1_sub1_avx2);
+  const __m256i tbl2 = _mm256_load_si256((__m256i const *) x_by_xplus1_sub2_avx2);
+  const __m256i tbl3 = _mm256_load_si256((__m256i const *) x_by_xplus1_sub3_avx2);
+  // negative
+  zb = _mm256_packus_epi16(_mm256_packs_epi32(*z0, *z1), _mm256_packs_epi32(*z2, *z3));
+  xzb = _mm256_xor_si256(zb, _mm256_set1_epi8(128));
+  cmp_sub = _mm256_cmpgt_epi8(_mm256_set1_epi8(255 ^ 128), xzb);
+  cmp_sub = _mm256_add_epi8(cmp_sub, _mm256_cmpgt_epi8(_mm256_set1_epi8(170 ^ 128), xzb));
+  cmp_sub = _mm256_add_epi8(cmp_sub, _mm256_cmpgt_epi8(_mm256_set1_epi8(102 ^ 128), xzb));
+  cmp_sub = _mm256_add_epi8(cmp_sub, _mm256_cmpgt_epi8(_mm256_set1_epi8(73 ^ 128), xzb));
+  cmp_sub = _mm256_add_epi8(cmp_sub, _mm256_cmpgt_epi8(_mm256_set1_epi8(56 ^ 128), xzb));
+  // 56 * 2 = 0x70
+  // positive
+  search = _mm256_adds_epu8(zb, _mm256_set1_epi8(0x70));
+  low_sub = _mm256_shuffle_epi8(tbl1, search);
+  zb = _mm256_sub_epi8(zb, _mm256_set1_epi8(16));
+  search = _mm256_adds_epu8(zb, _mm256_set1_epi8(0x70));
+  low_sub = _mm256_or_si256(low_sub, _mm256_shuffle_epi8(tbl2, search));
+  zb = _mm256_sub_epi8(zb, _mm256_set1_epi8(16));
+  search = _mm256_adds_epu8(zb, _mm256_set1_epi8(0x70));
+  low_sub = _mm256_or_si256(low_sub, _mm256_shuffle_epi8(tbl3, search));
+
+  cmp_sub = _mm256_sub_epi8(low_sub, cmp_sub);
+  *z1 = _mm256_unpacklo_epi8(cmp_sub, _mm256_setzero_si256());
+  *z0 = _mm256_unpacklo_epi16(*z1, _mm256_setzero_si256());
+  *z1 = _mm256_unpackhi_epi16(*z1, _mm256_setzero_si256());
+  *z3 = _mm256_unpackhi_epi8(cmp_sub, _mm256_setzero_si256());
+  *z2 = _mm256_unpacklo_epi16(*z3, _mm256_setzero_si256());
+  *z3 = _mm256_unpackhi_epi16(*z3, _mm256_setzero_si256());
+  /**z0 = _mm256_sub_epi32(_mm256_set1_epi32(256), *z0);
+  *z1 = _mm256_sub_epi32(_mm256_set1_epi32(256), *z1);
+  *z2 = _mm256_sub_epi32(_mm256_set1_epi32(256), *z2);
+  *z3 = _mm256_sub_epi32(_mm256_set1_epi32(256), *z3);*/
+}
+
 // Assumes that C, D are integral images for the original buffer which has been
 // extended to have a padding of SGRPROJ_BORDER_VERT/SGRPROJ_BORDER_HORZ pixels
 // on the sides. A, B, C, D point at logical position (0, 0).
@@ -208,6 +377,12 @@ static void calc_ab(int32_t *A, int32_t *B, const int32_t *C, const int32_t *D,
 
   const __m256i rnd_z = round_for_shift(SGRPROJ_MTABLE_BITS);
   const __m256i rnd_res = round_for_shift(SGRPROJ_RECIP_BITS);
+
+  __m256i backlog_z[3];
+  __m256i backlog_sum1[3];
+  int32_t *backlog_ptrA[3];
+  int32_t *backlog_ptrB[3];
+  int backlog_index = 0;
 
   // Set up masks
   const __m128i ones32 = _mm_set_epi64x(0, 0xffffffffffffffffULL);
@@ -238,12 +413,78 @@ static void calc_ab(int32_t *A, int32_t *B, const int32_t *C, const int32_t *D,
 
       const __m256i p = compute_p(sum1, sum2, bit_depth, n);
 
-      const __m256i z = _mm256_min_epi32(
+      __m256i z0 = _mm256_srli_epi32(_mm256_add_epi32(_mm256_mullo_epi32(p, s), rnd_z),
+                            SGRPROJ_MTABLE_BITS);
+      if (backlog_index == 3) {
+        __m256i z1 = backlog_z[0];
+        __m256i z2 = backlog_z[1];
+        __m256i z3 = backlog_z[2];
+        find_x_by_xplus1_x4(&z0, &z1, &z2, &z3);
+          __m256i a_res, a_comp_over_n, b_int, b_res;
+
+          a_res = _mm256_sub_epi32(_mm256_set1_epi32(SGRPROJ_SGR), z0);
+          yy_storeu_256(A + i * buf_stride + j, a_res);
+
+          // sum1 might have lanes greater than 2^15, so we can't use madd to do
+          // multiplication involving sum1. However, a_complement and one_over_n
+          // are both less than 256, so we can multiply them first.
+          a_comp_over_n = _mm256_madd_epi16(z0, one_over_n);
+          b_int = _mm256_mullo_epi32(a_comp_over_n, sum1);
+          b_res = _mm256_srli_epi32(_mm256_add_epi32(b_int, rnd_res),
+                                                  SGRPROJ_RECIP_BITS);
+          yy_storeu_256(B + i * buf_stride + j, b_res);
+
+          a_res = _mm256_sub_epi32(_mm256_set1_epi32(SGRPROJ_SGR), z1);
+          yy_storeu_256(backlog_ptrA[0], a_res);
+
+          // sum1 might have lanes greater than 2^15, so we can't use madd to do
+          // multiplication involving sum1. However, a_complement and one_over_n
+          // are both less than 256, so we can multiply them first.
+          a_comp_over_n = _mm256_madd_epi16(z1, one_over_n);
+          b_int = _mm256_mullo_epi32(a_comp_over_n, backlog_sum1[0]);
+          b_res = _mm256_srli_epi32(_mm256_add_epi32(b_int, rnd_res),
+                                                  SGRPROJ_RECIP_BITS);
+          yy_storeu_256(backlog_ptrB[0], b_res);
+
+          a_res = _mm256_sub_epi32(_mm256_set1_epi32(SGRPROJ_SGR), z2);
+          yy_storeu_256(backlog_ptrA[1], a_res);
+
+          // sum1 might have lanes greater than 2^15, so we can't use madd to do
+          // multiplication involving sum1. However, a_complement and one_over_n
+          // are both less than 256, so we can multiply them first.
+          a_comp_over_n = _mm256_madd_epi16(z2, one_over_n);
+          b_int = _mm256_mullo_epi32(a_comp_over_n, backlog_sum1[1]);
+          b_res = _mm256_srli_epi32(_mm256_add_epi32(b_int, rnd_res),
+                                                  SGRPROJ_RECIP_BITS);
+          yy_storeu_256(backlog_ptrB[1], b_res);
+
+          a_res = _mm256_sub_epi32(_mm256_set1_epi32(SGRPROJ_SGR), z3);
+          yy_storeu_256(backlog_ptrA[2], a_res);
+
+          // sum1 might have lanes greater than 2^15, so we can't use madd to do
+          // multiplication involving sum1. However, a_complement and one_over_n
+          // are both less than 256, so we can multiply them first.
+          a_comp_over_n = _mm256_madd_epi16(z3, one_over_n);
+          b_int = _mm256_mullo_epi32(a_comp_over_n, backlog_sum1[2]);
+          b_res = _mm256_srli_epi32(_mm256_add_epi32(b_int, rnd_res),
+                                                  SGRPROJ_RECIP_BITS);
+          yy_storeu_256(backlog_ptrB[2], b_res);
+
+        backlog_index = 0;
+      }
+      else {
+        backlog_z[backlog_index] = z0;
+        backlog_sum1[backlog_index] = sum1;
+        backlog_ptrA[backlog_index] = A + i * buf_stride + j;
+        backlog_ptrB[backlog_index] = B + i * buf_stride + j;
+        backlog_index++;
+      }
+      /*const __m256i z = _mm256_min_epi32(
           _mm256_srli_epi32(_mm256_add_epi32(_mm256_mullo_epi32(p, s), rnd_z),
                             SGRPROJ_MTABLE_BITS),
           _mm256_set1_epi32(255));
 
-      const __m256i a_res = _mm256_i32gather_epi32(x_by_xplus1, z, 4);
+      const __m256i a_res = find_x_by_xplus1(z);
 
       yy_storeu_256(A + i * buf_stride + j, a_res);
 
@@ -258,8 +499,34 @@ static void calc_ab(int32_t *A, int32_t *B, const int32_t *C, const int32_t *D,
       const __m256i b_res = _mm256_srli_epi32(_mm256_add_epi32(b_int, rnd_res),
                                               SGRPROJ_RECIP_BITS);
 
-      yy_storeu_256(B + i * buf_stride + j, b_res);
+      yy_storeu_256(B + i * buf_stride + j, b_res);*/
     }
+  }
+  if (backlog_index > 0) {
+    int k;
+    // Stop sanitize from triggering
+    // this is ugly...
+    __m256i filler = _mm256_undefined_si256();
+    find_x_by_xplus1_x4(backlog_z + 0, backlog_z + 1, backlog_z + 2, &filler);
+    for (k = 0; k < backlog_index; k++) {
+      const __m256i a_complement = backlog_z[k];
+
+      const __m256i a_res =
+          _mm256_sub_epi32(_mm256_set1_epi32(SGRPROJ_SGR), a_complement);
+
+      yy_storeu_256(backlog_ptrA[k], a_res);
+
+      // sum1 might have lanes greater than 2^15, so we can't use madd to do
+      // multiplication involving sum1. However, a_complement and one_over_n
+      // are both less than 256, so we can multiply them first.
+      const __m256i a_comp_over_n = _mm256_madd_epi16(a_complement, one_over_n);
+      const __m256i b_int = _mm256_mullo_epi32(a_comp_over_n, backlog_sum1[k]);
+      const __m256i b_res = _mm256_srli_epi32(_mm256_add_epi32(b_int, rnd_res),
+                                              SGRPROJ_RECIP_BITS);
+
+      yy_storeu_256(backlog_ptrB[k], b_res);
+    }
+    backlog_index = 0;
   }
 }
 
@@ -279,7 +546,7 @@ static void calc_ab(int32_t *A, int32_t *B, const int32_t *C, const int32_t *D,
 // cross_sum = 4 * fours + 3 * threes
 //           = 4 * (fours + threes) - threes
 //           = (fours + threes) << 2 - threes
-static __m256i cross_sum(const int32_t *buf, int stride) {
+static INLINE __m256i cross_sum(const int32_t *buf, int stride) {
   const __m256i xtl = yy_loadu_256(buf - 1 - stride);
   const __m256i xt = yy_loadu_256(buf - stride);
   const __m256i xtr = yy_loadu_256(buf + 1 - stride);
@@ -720,7 +987,8 @@ void av1_selfguided_restoration_avx2(const uint8_t *dgd8, int width, int height,
 
   DECLARE_ALIGNED(32, int32_t,
                   buf[4 * ALIGN_POWER_OF_TWO(RESTORATION_PROC_UNIT_PELS, 3)]);
-  memset(buf, 0, sizeof(buf));
+  //memset(buf, 0, sizeof(buf));
+  //memset(buf + 2 * buf_elts, 0, 2 * buf_elts * sizeof(*buf));
 
   const int width_ext = width + 2 * SGRPROJ_BORDER_HORZ;
   const int height_ext = height + 2 * SGRPROJ_BORDER_VERT;
