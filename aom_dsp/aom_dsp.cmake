@@ -93,7 +93,6 @@ set(AOM_DSP_COMMON_ASM_NEON
 
 set(AOM_DSP_COMMON_INTRIN_NEON
     ${AOM_DSP_COMMON_INTRIN_NEON}
-    "${AOM_ROOT}/aom_dsp/arm/avg_neon.c"
     "${AOM_ROOT}/aom_dsp/arm/fwd_txfm_neon.c"
     "${AOM_ROOT}/aom_dsp/arm/hadamard_neon.c"
     "${AOM_ROOT}/aom_dsp/arm/idct16x16_neon.c"
@@ -266,7 +265,6 @@ if (CONFIG_AV1_ENCODER)
 
   set(AOM_DSP_ENCODER_SOURCES
       ${AOM_DSP_ENCODER_SOURCES}
-      "${AOM_ROOT}/aom_dsp/avg.c"
       "${AOM_ROOT}/aom_dsp/fwd_txfm.c"
       "${AOM_ROOT}/aom_dsp/fwd_txfm.h"
       "${AOM_ROOT}/aom_dsp/quantize.c"
@@ -275,7 +273,6 @@ if (CONFIG_AV1_ENCODER)
 
   set(AOM_DSP_ENCODER_INTRIN_SSE2
       ${AOM_DSP_ENCODER_INTRIN_SSE2}
-      "${AOM_ROOT}/aom_dsp/x86/avg_intrin_sse2.c"
       "${AOM_ROOT}/aom_dsp/x86/fwd_dct32_8cols_sse2.c"
       "${AOM_ROOT}/aom_dsp/x86/fwd_dct32x32_impl_sse2.h"
       "${AOM_ROOT}/aom_dsp/x86/fwd_txfm_impl_sse2.h"
@@ -288,7 +285,6 @@ if (CONFIG_AV1_ENCODER)
 
   set(AOM_DSP_ENCODER_ASM_SSSE3_X86_64
       ${AOM_DSP_ENCODER_ASM_SSSE3_X86_64}
-      "${AOM_ROOT}/aom_dsp/x86/avg_ssse3_x86_64.asm"
       "${AOM_ROOT}/aom_dsp/x86/quantize_ssse3_x86_64.asm")
 
   set(AOM_DSP_ENCODER_AVX_ASM_X86_64
